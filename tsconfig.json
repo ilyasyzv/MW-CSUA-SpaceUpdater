@@ -1,0 +1,21 @@
+{
+    "compilerOptions": {
+        "rootDir": ".",
+        "outDir": "dist",
+        "alwaysStrict": true,
+        "declaration": true,
+        "esModuleInterop": true,
+        "inlineSourceMap": false,
+        "inlineSources": true,
+        "lib": ["es2022"],
+        "module": "commonjs",
+        "strict": true,
+        "strictNullChecks": true,
+        "strictPropertyInitialization": true,
+        "target": "es2022",
+        "incremental": true,
+        "declarationMap": true,
+        "sourceMap": true,
+        "skipLibCheck": true
+    }
+}
