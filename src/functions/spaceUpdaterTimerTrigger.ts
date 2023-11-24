@@ -52,8 +52,7 @@ export async function spaceUpdaterTimerTrigger(_myTimer: Timer, _context: Invoca
         // TODO
         // Need to check which Spaces is exist in `bigQuery` but didn't exist in Contentful anymore
         // And check that Spaces in `bigQuery`
-        const contentfulSpaces = await contentfulManager.getAllSpaces();
-        const spacesToUpdate: Space[] = contentfulSpaces.map(({ spaceName, environments, createdAt }) =>
+        const spacesToUpdate: Space[] = allSpaces.map(({ spaceName, environments, createdAt }) =>
             environments.map((environment) => ({
                 name: spaceName,
                 environment,
@@ -68,7 +67,7 @@ export async function spaceUpdaterTimerTrigger(_myTimer: Timer, _context: Invoca
         // Assuming fetchedSpaces represents the spaces fetched from the BigQuery table
         const fetchedSpaces: Space[] = await spaceListManager.fetchSpacesFromBigQuery();
         fetchedSpaces.forEach(({ name, environment }) => {
-            const existsInContentful = contentfulSpaces.some(
+            const existsInContentful = allSpaces.some(
                 (contentfulSpace) => contentfulSpace.spaceId === name && contentfulSpace.environments.includes(environment)
             );
             if (!existsInContentful) {
