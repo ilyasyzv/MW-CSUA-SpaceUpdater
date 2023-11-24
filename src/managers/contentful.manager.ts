@@ -14,7 +14,7 @@ interface GetAllAppInstallationsResponse {
     items: Array<object>;
 }
 
-type GetAllSpacesResponse = Array<{ space: string; environments: Array<string> }>;
+type GetAllSpacesResponse = Array<{ spaceId: string; environments: Array<string>; spaceName: string; createdAt: string }>;
 
 export class ContentfulManager {
     private readonly client: AxiosInstance;
@@ -56,8 +56,10 @@ export class ContentfulManager {
 
             result.push(
                 ...allEnvironments.map((environments, index) => ({
-                    space: arSpaces[index].sys.id,
+                    spaceId: arSpaces[index].sys.id,
                     environments: environments.status === "fulfilled" ? environments.value : [],
+                    spaceName: arSpaces[index].name,
+                    createdAt: arSpaces[index].sys.createdAt,
                 })),
             );
 
