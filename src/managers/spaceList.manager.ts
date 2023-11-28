@@ -39,6 +39,7 @@ export class SpaceListManager {
                 decommissioned: row.decommissioned,
             }));
 
+            console.log('Fetched spaces from BigQuery:', fetchedSpaces);
             return fetchedSpaces;
         } catch (error) {
             errorHandler(error as Error);
@@ -60,6 +61,7 @@ export class SpaceListManager {
         const table = this.bigquery.dataset(this.datasetId).table(this.tableId);
 
         try {
+            console.log('Spaces inserted into BigQuery:', rows);
             await table.insert(rows);
         } catch (error) {
             errorHandler(error as Error);
@@ -77,6 +79,7 @@ export class SpaceListManager {
         `;
 
         try {
+            console.log('Space marked as decommissioned in BigQuery:', { spaceName, environment });
             await this.bigquery.query({ query });
         } catch (error) {
             errorHandler(error as Error);
