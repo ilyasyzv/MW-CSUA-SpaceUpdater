@@ -61,8 +61,6 @@ export async function spaceUpdaterTimerTrigger(_myTimer: Timer, _context: Invoca
             }))
         ).flat();
 
-        _context.log("Spaces to update:", spacesToUpdate)
-
         await spaceListManager.updateSpaceList(spacesToUpdate);
 
         // Decommission spaces that no longer exist in Contentful

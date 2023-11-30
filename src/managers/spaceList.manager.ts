@@ -51,18 +51,28 @@ export class SpaceListManager {
      * Updates the space list in BigQuery with the provided spaces
      */
     public async updateSpaceList(spaces: Space[]): Promise<void> {
-        const rows = spaces.map(({ name, environment, createdAt, decommissioned }) => ({
+        const existingSpaces = await this.fetchSpacesFromBigQuery();
+
+        const rowsToAdd = spaces.filter((newSpace) => {
+            return !existingSpaces.some((existingSpace) =>
+                existingSpace.name === newSpace.name && existingSpace.environment === newSpace.environment
+            );
+        }).map(({ name, environment, createdAt, decommissioned }) => ({
             name,
             environment,
             createdAt,
             decommissioned,
         }));
 
+        if (rowsToAdd.length === 0) {
+            return;
+        }
+
         const table = this.bigquery.dataset(this.datasetId).table(this.tableId);
 
         try {
-            console.log('Spaces inserted into BigQuery:', rows);
-            await table.insert(rows);
+            console.log('Spaces to add in BigQuery', rowsToAdd);
+            await table.insert(rowsToAdd);
         } catch (error) {
             errorHandler(error as Error);
         }
@@ -72,9 +82,12 @@ export class SpaceListManager {
      * Marks a specific space in a particular environment as decommissioned
      */
     public async markSpaceAsDecommissioned(spaceName: string, environment: string): Promise<void> {
+        const decommissionDate = new Date().toISOString().slice(0, -1);
+
         const query = `
             UPDATE ${this.datasetId}.${this.tableId}
-            SET decommissioned = 1
+            SET decommissioned = 1,
+            decommissionDate = DATETIME('${decommissionDate}')
             WHERE name = '${spaceName}' AND environment = '${environment}'
         `;
 
