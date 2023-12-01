@@ -81,18 +81,27 @@ export class SpaceListManager {
     /**
      * Marks a specific space in a particular environment as decommissioned
      */
-    public async markSpaceAsDecommissioned(spaceName: string, environment: string): Promise<void> {
-        const decommissionDate = new Date().toISOString().slice(0, -1);
+    public async switchDecommissionedMark(spaceName: string, environment: string, decommissioned: number): Promise<void> {
+        let query: string;
 
-        const query = `
-            UPDATE ${this.datasetId}.${this.tableId}
-            SET decommissioned = 1,
-            decommissionDate = DATETIME('${decommissionDate}')
-            WHERE name = '${spaceName}' AND environment = '${environment}'
-        `;
+        if (decommissioned === 1) {
+            query = `
+                UPDATE ${this.datasetId}.${this.tableId}
+                SET decommissioned = 0,
+                decommissionDate = NULL
+                WHERE name = '${spaceName}' AND environment = '${environment}'
+            `;
+        } else {
+            query = `
+                UPDATE ${this.datasetId}.${this.tableId}
+                SET decommissioned = 1,
+                decommissionDate = DATETIME('${new Date().toISOString().slice(0, -1)}')
+                WHERE name = '${spaceName}' AND environment = '${environment}'
+            `;
+        }
 
         try {
-            console.log('Space marked as decommissioned in BigQuery:', { spaceName, environment });
+            console.log(`Space status updated in BigQuery: ${spaceName} - ${environment} - Decommissioned: ${decommissioned}`);
             await this.bigquery.query({ query });
         } catch (error) {
             errorHandler(error as Error);

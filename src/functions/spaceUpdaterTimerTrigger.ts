@@ -71,7 +71,9 @@ export async function spaceUpdaterTimerTrigger(_myTimer: Timer, _context: Invoca
                 (contentfulSpace) => contentfulSpace.spaceId === name && contentfulSpace.environments.includes(environment)
             );
             if (!existsInContentful) {
-                spaceListManager.markSpaceAsDecommissioned(name, environment);
+                spaceListManager.switchDecommissionedMark(name, environment, 1);
+            } else {
+                spaceListManager.switchDecommissionedMark(name, environment, 0);
             }
         });
     } catch (error) {
