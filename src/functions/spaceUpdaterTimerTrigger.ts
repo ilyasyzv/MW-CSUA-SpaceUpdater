@@ -14,17 +14,25 @@ export async function spaceUpdaterTimerTrigger(_myTimer: Timer, _context: Invoca
             new DefaultAzureCredential(),
         );
 
-        const [contentfulAccessToken, bigQueryToken] = await Promise.all([
+        const [contentfulAccessToken, bigQueryToken, inventoryAuthKey] = await Promise.all([
             secretClient.getSecret(GLOBAL_SETTINGS.CONTENTFUL_ACCESS_TOKEN_NAME),
             secretClient.getSecret(GLOBAL_SETTINGS.BIG_QUERY_TOKEN_NAME),
+            secretClient.getSecret(GLOBAL_SETTINGS.MWI_API_AUTH_KEY_NAME),
         ]);
 
         const contentfulAccessTokenValue = contentfulAccessToken.value || "";
         const bigQueryTokenValue = JSON.parse(bigQueryToken.value || "");
         bigQueryTokenValue.private_key = bigQueryTokenValue.private_key.replace(/\\n/g, "\n");
+        const inventoryAuthKeyValue = inventoryAuthKey.value || ""
 
         const contentfulManager = new ContentfulManager(contentfulAccessTokenValue);
-        const spaceListManager = new SpaceListManager(bigQueryTokenValue, "dynadash_dev", "r_csu_spaces_list");
+        const spaceListManager = new SpaceListManager(
+            bigQueryTokenValue, 
+            GLOBAL_SETTINGS.BIG_QUERY_DATASET_ID, 
+            GLOBAL_SETTINGS.BIG_QUERY_TABLE_ID, 
+            GLOBAL_SETTINGS.MWI_API_URL, 
+            inventoryAuthKeyValue
+        );
 
         const allSpacesPromise = contentfulManager.getAllSpaces();
         const allInstalledSpacesPromise = contentfulManager.getAllInstalledSpacesPromise();
@@ -76,6 +84,8 @@ export async function spaceUpdaterTimerTrigger(_myTimer: Timer, _context: Invoca
                 spaceListManager.switchDecommissionedMark(name, environment, 0);
             }
         });
+
+        await spaceListManager.markSpacesPresentInInventory();
     } catch (error) {
         errorHandler(error as Error);
     }
