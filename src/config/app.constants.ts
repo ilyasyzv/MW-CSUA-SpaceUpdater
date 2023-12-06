@@ -12,5 +12,7 @@ export const GLOBAL_SETTINGS = Object.freeze({
     BIG_QUERY_TOKEN_NAME: process.env.BIG_QUERY_TOKEN_NAME || "",
     BIG_QUERY_DATASET_ID: process.env.BIG_QUERY_DATASET_ID || "",
     BIG_QUERY_TABLE_ID: process.env.BIG_QUERY_TABLE_ID || "",
+    MWI_API_URL: process.env.MWI_API_URL || "",
+    MWI_API_AUTH_KEY_NAME: process.env.MWI_API_AUTH_KEY_NAME || "",
     AXIOS_TIMEOUT: 600000,
 });

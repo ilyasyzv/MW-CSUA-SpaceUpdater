@@ -1,4 +1,5 @@
 import { BigQuery } from "@google-cloud/bigquery";
+import axios from "axios";
 import { errorHandler } from "../utils/error";
 
 export interface Space {
@@ -12,11 +13,15 @@ export class SpaceListManager {
     private readonly bigquery: BigQuery;
     private readonly datasetId: string;
     private readonly tableId: string;
+    private readonly inventoryApiUrl: string;
+    private readonly inventoryAuthKey: string;
 
-    constructor(credentials: object, datasetId: string, tableId: string) {
+    constructor(credentials: object, datasetId: string, tableId: string, inventoryApiUrl: string, inventoryAuthKey: string) {
         this.bigquery = new BigQuery({ credentials });
         this.datasetId = datasetId;
         this.tableId = tableId;
+        this.inventoryApiUrl = inventoryApiUrl;
+        this.inventoryAuthKey = inventoryAuthKey;
     }
 
     /**
@@ -39,7 +44,6 @@ export class SpaceListManager {
                 decommissioned: row.decommissioned,
             }));
 
-            console.log('Fetched spaces from BigQuery:', fetchedSpaces);
             return fetchedSpaces;
         } catch (error) {
             errorHandler(error as Error);
@@ -71,8 +75,8 @@ export class SpaceListManager {
         const table = this.bigquery.dataset(this.datasetId).table(this.tableId);
 
         try {
-            console.log('Spaces to add in BigQuery', rowsToAdd);
             await table.insert(rowsToAdd);
+            console.log('Spaces to add in BigQuery', rowsToAdd);
         } catch (error) {
             errorHandler(error as Error);
         }
@@ -101,8 +105,56 @@ export class SpaceListManager {
         }
 
         try {
-            console.log(`Space status updated in BigQuery: ${spaceName} - ${environment} - Decommissioned: ${decommissioned}`);
             await this.bigquery.query({ query });
+            console.log(`Space status updated in BigQuery: ${spaceName} - ${environment} - Decommissioned: ${decommissioned}`);
+        } catch (error) {
+            errorHandler(error as Error);
+        }
+    }
+
+    /**
+     * Marks spaces present in the Inventory API by comparing with existing spaces in BigQuery and updating their presence status.
+     */
+    public async markSpacesPresentInInventory(): Promise<void> {
+        try {
+            const response = await axios.get(this.inventoryApiUrl, {
+                auth: {
+                    username: "",
+                    password: this.inventoryAuthKey
+                }
+            });
+
+            const inventorySpaces = response.data as Array<{ name: string }>;
+
+            const existingSpaces = await this.fetchSpacesFromBigQuery();
+
+            existingSpaces.forEach((existingSpace) => {
+                const foundSpace = inventorySpaces.find((inventorySpace) => {
+                    return existingSpace.name === inventorySpace.name;
+                });
+
+                const presentInInventory = foundSpace ? 1 : 0;
+
+                this.updateSpacePresentInInventory(existingSpace.name, presentInInventory);
+            });
+        } catch (error) {
+            errorHandler(error as Error);
+        }
+    }
+
+    /**
+     * Updates the presence status of a space in the BigQuery table.
+     */
+    private async updateSpacePresentInInventory(name: string, presentInInventory: number): Promise<void> {
+        const query = `
+            UPDATE ${this.datasetId}.${this.tableId}
+            SET presentInInventory = ${presentInInventory}
+            WHERE name = '${name}''
+        `;
+
+        try {
+            await this.bigquery.query({ query });
+            console.log(`Space updated with presentInInventory status: ${name} - ${presentInInventory}`);
         } catch (error) {
             errorHandler(error as Error);
         }
