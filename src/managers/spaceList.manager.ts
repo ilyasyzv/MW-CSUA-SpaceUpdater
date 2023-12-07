@@ -30,7 +30,7 @@ export class SpaceListManager {
     public async fetchSpacesFromBigQuery(): Promise<Space[]> {
         const query = `
             SELECT name, environment, createdAt, decommissioned
-            FROM ${this.datasetId}.${this.tableId}
+            FROM \`${this.datasetId}.${this.tableId}\`
         `;
 
         try {
@@ -90,17 +90,17 @@ export class SpaceListManager {
 
         if (decommissioned === 1) {
             query = `
-                UPDATE ${this.datasetId}.${this.tableId}
+                UPDATE \`${this.datasetId}.${this.tableId}\`
                 SET decommissioned = 0,
                 decommissionDate = NULL
-                WHERE name = '${spaceName}' AND environment = '${environment}'
+                WHERE name = "${spaceName}" AND environment = "${environment}"
             `;
         } else {
             query = `
-                UPDATE ${this.datasetId}.${this.tableId}
+                UPDATE \`${this.datasetId}.${this.tableId}\`
                 SET decommissioned = 1,
                 decommissionDate = DATETIME('${new Date().toISOString().slice(0, -1)}')
-                WHERE name = '${spaceName}' AND environment = '${environment}'
+                WHERE name = "${spaceName}" AND environment = "${environment}"
             `;
         }
 
@@ -147,9 +147,9 @@ export class SpaceListManager {
      */
     private async updateSpacePresentInInventory(name: string, presentInInventory: number): Promise<void> {
         const query = `
-            UPDATE ${this.datasetId}.${this.tableId}
+            UPDATE \`${this.datasetId}.${this.tableId}\`
             SET presentInInventory = ${presentInInventory}
-            WHERE name = '${name}''
+            WHERE name = "${name}"
         `;
 
         try {
