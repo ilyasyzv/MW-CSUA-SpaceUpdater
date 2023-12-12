@@ -1,12 +1,15 @@
 import { BigQuery } from "@google-cloud/bigquery";
 import axios from "axios";
 import { errorHandler } from "../utils/error";
+import { RateLimiter } from "../utils/rateLimiter";
 
 export interface Space {
     name: string;
     environment: string;
     createdAt: string;
     decommissioned: number;
+    decommissionedDate?: string;
+    presentInInventory: number;
 }
 
 export class SpaceListManager {
@@ -16,12 +19,20 @@ export class SpaceListManager {
     private readonly inventoryApiUrl: string;
     private readonly inventoryAuthKey: string;
 
+    private readonly rateLimiter: RateLimiter;
+
     constructor(credentials: object, datasetId: string, tableId: string, inventoryApiUrl: string, inventoryAuthKey: string) {
         this.bigquery = new BigQuery({ credentials });
         this.datasetId = datasetId;
         this.tableId = tableId;
         this.inventoryApiUrl = inventoryApiUrl;
         this.inventoryAuthKey = inventoryAuthKey;
+
+        this.rateLimiter = new RateLimiter(1, 1000);
+    }
+
+    private async rateLimitedOperation(rateLimiter: Function): Promise<void> {
+        return this.rateLimiter.addToQueue(rateLimiter);
     }
 
     /**
@@ -29,7 +40,7 @@ export class SpaceListManager {
      */
     public async fetchSpacesFromBigQuery(): Promise<Space[]> {
         const query = `
-            SELECT name, environment, createdAt, decommissioned
+            SELECT name, environment, createdAt, decommissioned, presentInInventory
             FROM \`${this.datasetId}.${this.tableId}\`
         `;
 
@@ -42,6 +53,7 @@ export class SpaceListManager {
                 environment: row.environment,
                 createdAt: row.createdAt,
                 decommissioned: row.decommissioned,
+                presentInInventory: row.presentInInventory
             }));
 
             return fetchedSpaces;
@@ -56,60 +68,64 @@ export class SpaceListManager {
      */
     public async updateSpaceList(spaces: Space[]): Promise<void> {
         const existingSpaces = await this.fetchSpacesFromBigQuery();
-
-        const rowsToAdd = spaces.filter((newSpace) => {
-            return !existingSpaces.some((existingSpace) =>
-                existingSpace.name === newSpace.name && existingSpace.environment === newSpace.environment
+        const table = this.bigquery.dataset(this.datasetId).table(this.tableId);
+        const newSpaces = spaces.filter(({ name, environment }) => {
+            return !existingSpaces.some(existingSpace =>
+                existingSpace.name === name && existingSpace.environment === environment
             );
-        }).map(({ name, environment, createdAt, decommissioned }) => ({
-            name,
-            environment,
-            createdAt,
-            decommissioned,
-        }));
-
-        if (rowsToAdd.length === 0) {
+        });
+    
+        if (newSpaces.length === 0) {
+            console.log('No new spaces to add.');
             return;
         }
-
-        const table = this.bigquery.dataset(this.datasetId).table(this.tableId);
-
-        try {
-            await table.insert(rowsToAdd);
-            console.log('Spaces to add in BigQuery', rowsToAdd);
-        } catch (error) {
-            errorHandler(error as Error);
-        }
+    
+        const rateLimiter = newSpaces.map(({ name, environment, createdAt, decommissioned, presentInInventory }) => async () => {
+            try {
+                await table.insert([{ name, environment, createdAt, decommissioned, presentInInventory }]);
+                console.log('Space added in BigQuery', { name, environment, createdAt, decommissioned, presentInInventory });
+            } catch (error) {
+                errorHandler(error as Error);
+            }
+        });
+    
+        await Promise.all(rateLimiter.map((op) => this.rateLimitedOperation(op)));
     }
 
     /**
      * Marks a specific space in a particular environment as decommissioned
      */
     public async switchDecommissionedMark(spaceName: string, environment: string, decommissioned: number): Promise<void> {
-        let query: string;
+        const rateLimiter = async () => {
+            let query: string;
 
-        if (decommissioned === 1) {
-            query = `
-                UPDATE \`${this.datasetId}.${this.tableId}\`
-                SET decommissioned = 0,
-                decommissionDate = NULL
-                WHERE name = "${spaceName}" AND environment = "${environment}"
-            `;
-        } else {
-            query = `
-                UPDATE \`${this.datasetId}.${this.tableId}\`
-                SET decommissioned = 1,
-                decommissionDate = DATETIME('${new Date().toISOString().slice(0, -1)}')
-                WHERE name = "${spaceName}" AND environment = "${environment}"
-            `;
-        }
+            if (decommissioned === 1) {
+                query = `
+                    UPDATE \`${this.datasetId}.${this.tableId}\`
+                    SET decommissioned = 1,
+                    decommissionDate = DATETIME("${new Date().toISOString().slice(0, -1)}")
+                    WHERE name = "${spaceName}" AND environment = "${environment}"
+                `;
+            } else {
+                query = `
+                    UPDATE \`${this.datasetId}.${this.tableId}\`
+                    SET decommissioned = 0,
+                    decommissionDate = NULL
+                    WHERE name = "${spaceName}" AND environment = "${environment}"
+                `;
+            }
 
-        try {
-            await this.bigquery.query({ query });
-            console.log(`Space status updated in BigQuery: ${spaceName} - ${environment} - Decommissioned: ${decommissioned}`);
-        } catch (error) {
-            errorHandler(error as Error);
-        }
+            try {
+                await this.rateLimitedOperation(async () => {
+                    await this.bigquery.createQueryJob({ query });
+                    console.log(`Space status updated in BigQuery: ${spaceName} - ${environment} - Decommissioned: ${decommissioned}`);
+                });
+            } catch (error) {
+                errorHandler(error as Error);
+            }
+        };
+
+        await rateLimiter();
     }
 
     /**
@@ -125,7 +141,6 @@ export class SpaceListManager {
             });
 
             const inventorySpaces = response.data as Array<{ name: string }>;
-
             const existingSpaces = await this.fetchSpacesFromBigQuery();
 
             existingSpaces.forEach((existingSpace) => {
@@ -133,9 +148,15 @@ export class SpaceListManager {
                     return existingSpace.name === inventorySpace.name;
                 });
 
-                const presentInInventory = foundSpace ? 1 : 0;
-
-                this.updateSpacePresentInInventory(existingSpace.name, presentInInventory);
+                if (foundSpace) {
+                    if (existingSpace.presentInInventory !== 1) {
+                        this.updateSpacePresentInInventory(existingSpace.name, 1);
+                    }
+                } else {
+                    if (existingSpace.presentInInventory !== 0) {
+                        this.updateSpacePresentInInventory(existingSpace.name, 0);
+                    }
+                }
             });
         } catch (error) {
             errorHandler(error as Error);
@@ -146,17 +167,23 @@ export class SpaceListManager {
      * Updates the presence status of a space in the BigQuery table.
      */
     private async updateSpacePresentInInventory(name: string, presentInInventory: number): Promise<void> {
-        const query = `
-            UPDATE \`${this.datasetId}.${this.tableId}\`
-            SET presentInInventory = ${presentInInventory}
-            WHERE name = "${name}"
-        `;
+        const rateLimiter = async () => {
+            const query = `
+                UPDATE \`${this.datasetId}.${this.tableId}\`
+                SET presentInInventory = ${presentInInventory}
+                WHERE name = "${name}"
+            `;
 
-        try {
-            await this.bigquery.query({ query });
-            console.log(`Space updated with presentInInventory status: ${name} - ${presentInInventory}`);
-        } catch (error) {
-            errorHandler(error as Error);
-        }
+            try {
+                await this.rateLimitedOperation(async () => {
+                    await this.bigquery.createQueryJob({ query });
+                    console.log(`Space updated with presentInInventory status: ${name} - ${presentInInventory}`);
+                });
+            } catch (error) {
+                errorHandler(error as Error);
+            }
+        };
+
+        await rateLimiter();
     }
 }

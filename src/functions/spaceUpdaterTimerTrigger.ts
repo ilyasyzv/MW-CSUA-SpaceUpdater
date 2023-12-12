@@ -66,6 +66,7 @@ export async function spaceUpdaterTimerTrigger(_myTimer: Timer, _context: Invoca
                 environment,
                 createdAt: new Date(createdAt).toISOString().slice(0, -1),
                 decommissioned: 0,
+                presentInInventory: 0
             }))
         ).flat();
 
@@ -74,14 +75,18 @@ export async function spaceUpdaterTimerTrigger(_myTimer: Timer, _context: Invoca
         // Decommission spaces that no longer exist in Contentful
         // Assuming fetchedSpaces represents the spaces fetched from the BigQuery table
         const fetchedSpaces: Space[] = await spaceListManager.fetchSpacesFromBigQuery();
-        fetchedSpaces.forEach(({ name, environment }) => {
+        fetchedSpaces.forEach(({ name, environment, decommissioned }) => {
             const existsInContentful = allSpaces.some(
-                (contentfulSpace) => contentfulSpace.spaceId === name && contentfulSpace.environments.includes(environment)
+                (contentfulSpace) => contentfulSpace.spaceName === name && contentfulSpace.environments.includes(environment)
             );
             if (!existsInContentful) {
-                spaceListManager.switchDecommissionedMark(name, environment, 1);
+                if (decommissioned !== 1) {
+                    spaceListManager.switchDecommissionedMark(name, environment, 1);
+                }
             } else {
-                spaceListManager.switchDecommissionedMark(name, environment, 0);
+                if (decommissioned !== 0) {
+                    spaceListManager.switchDecommissionedMark(name, environment, 0);
+                }
             }
         });
 
