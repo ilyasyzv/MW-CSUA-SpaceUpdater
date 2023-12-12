@@ -28,7 +28,7 @@ export class SpaceListManager {
         this.inventoryApiUrl = inventoryApiUrl;
         this.inventoryAuthKey = inventoryAuthKey;
 
-        this.rateLimiter = new RateLimiter(1, 1000);
+        this.rateLimiter = new RateLimiter(1, 2000);
     }
 
     private async rateLimitedOperation(rateLimiter: Function): Promise<void> {
@@ -139,25 +139,33 @@ export class SpaceListManager {
                     password: this.inventoryAuthKey
                 }
             });
-
+    
             const inventorySpaces = response.data as Array<{ name: string }>;
             const existingSpaces = await this.fetchSpacesFromBigQuery();
-
-            existingSpaces.forEach((existingSpace) => {
-                const foundSpace = inventorySpaces.find((inventorySpace) => {
-                    return existingSpace.name === inventorySpace.name;
-                });
-
-                if (foundSpace) {
-                    if (existingSpace.presentInInventory !== 1) {
-                        this.updateSpacePresentInInventory(existingSpace.name, 1);
+    
+            const batchSize = 20;
+            const spaceChunks = [];
+            for (let i = 0; i < existingSpaces.length; i += batchSize) {
+                spaceChunks.push(existingSpaces.slice(i, i + batchSize));
+            }
+    
+            for (const chunk of spaceChunks) {
+                await Promise.all(chunk.map(async (existingSpace) => {
+                    const foundSpace = inventorySpaces.find((inventorySpace) => {
+                        return existingSpace.name === inventorySpace.name;
+                    });
+    
+                    if (foundSpace) {
+                        if (existingSpace.presentInInventory !== 1) {
+                            await this.updateSpacePresentInInventory(existingSpace.name, 1);
+                        }
+                    } else {
+                        if (existingSpace.presentInInventory !== 0) {
+                            await this.updateSpacePresentInInventory(existingSpace.name, 0);
+                        }
                     }
-                } else {
-                    if (existingSpace.presentInInventory !== 0) {
-                        this.updateSpacePresentInInventory(existingSpace.name, 0);
-                    }
-                }
-            });
+                }));
+            }
         } catch (error) {
             errorHandler(error as Error);
         }
