@@ -6,6 +6,7 @@ import { GLOBAL_SETTINGS } from "../config/app.constants";
 import { errorHandler } from "../utils/error";
 import { ContentfulManager } from "../managers/contentful.manager";
 import { SpaceListManager, Space } from "../managers/spaceList.manager";
+import { RateLimiter } from "../utils/rateLimiter";
 
 export async function spaceUpdaterTimerTrigger(_myTimer: Timer, _context: InvocationContext): Promise<void> {
     try {
@@ -39,23 +40,40 @@ export async function spaceUpdaterTimerTrigger(_myTimer: Timer, _context: Invoca
         const [allSpaces, allInstalledSpaces] = await Promise.all([allSpacesPromise, allInstalledSpacesPromise]);
 
         // check where App is not installed and install it
-        const installations: Array<Promise<boolean>> = [];
-        allSpaces.forEach(({ spaceId, environments }) => {
-            environments.forEach((environment) => {
-                if (!allInstalledSpaces[spaceId]?.[environment] && installations.length < 20) {
-                    _.set(allInstalledSpaces, `${spaceId}.${environment}`, true);
-                    installations.push(
-                        contentfulManager.installApp({
-                            spaceId: spaceId,
-                            environmentId: environment,
-                            appDefinitionId: GLOBAL_SETTINGS.CF_APP_DEFINITION_ID,
-                        }),
-                    );
-                }
-            });
-        });
+        const rateLimiter = new RateLimiter(5, 1000);
+        const batchSize = 20;
+        const installations: Array<Promise<void>> = [];
+        for (let i = 0; i < allSpaces.length; i += batchSize) {
+            const batch = allSpaces.slice(i, i + batchSize);
 
-        await Promise.allSettled(installations);
+            const batchInstallations = batch.flatMap(({ spaceId, environments }) => {
+                return environments.map((environment) => {
+                    const isInstalled = _.get(allInstalledSpaces, `${spaceId}.${environment}`, false);
+
+                    if (!isInstalled) {
+                        console.log(`Adding app installation to the queue for spaceId: ${spaceId}, environment: ${environment}`);
+
+                        return rateLimiter.addToQueue(async () => {
+                            console.log(`Installing app for spaceId: ${spaceId}, environment: ${environment}`);
+                            await contentfulManager.installApp({
+                                spaceId: spaceId,
+                                environmentId: environment,
+                                appDefinitionId: GLOBAL_SETTINGS.CF_APP_DEFINITION_ID,
+                            });
+                            console.log(`App installed successfully for spaceId: ${spaceId}, environment: ${environment}`);
+                        });
+                    } else {
+                        console.log(`App is already installed for spaceId: ${spaceId}, environment: ${environment}`);
+                    }
+
+                    return Promise.resolve();
+                });
+            });
+
+            installations.push(Promise.all(batchInstallations).then(() => {}));
+        }
+
+        await Promise.all(installations);
 
         // TODO
         // Need to check which Spaces is exist in `bigQuery` but didn't exist in Contentful anymore
