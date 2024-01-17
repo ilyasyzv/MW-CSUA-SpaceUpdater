@@ -1,6 +1,6 @@
 import { ClientAPI, createClient, Space } from "contentful-management";
-import set from "lodash/fp/set";
 import axios, { AxiosInstance, HttpStatusCode } from "axios";
+import _ from "lodash";
 import { GLOBAL_SETTINGS } from "../config/app.constants";
 import { errorHandler } from "../utils/error";
 
@@ -14,7 +14,12 @@ interface GetAllAppInstallationsResponse {
     items: Array<object>;
 }
 
-type GetAllSpacesResponse = Array<{ spaceId: string; environments: Array<string>; spaceName: string; createdAt: string }>;
+type GetAllSpacesResponse = Array<{
+    spaceId: string;
+    environments: Array<string>;
+    spaceName: string;
+    createdAt: string;
+}>;
 
 export class ContentfulManager {
     private readonly client: AxiosInstance;
@@ -42,16 +47,34 @@ export class ContentfulManager {
     public async getAllSpaces(): Promise<GetAllSpacesResponse> {
         const result: GetAllSpacesResponse = [];
 
-        let skip = 0;
-        let total = 0;
-        let limit = 0;
+        let skipSpaces = 0;
+        let totalSpaces = 0;
+        let limitSpaces = 0;
         do {
-            const spaces = await this.contentfulClient.getSpaces({ skip: skip + limit });
+            const spaces = await this.contentfulClient.getSpaces({ skip: skipSpaces + limitSpaces });
             const arSpaces: Array<Space> = spaces.items;
             const allEnvironments = await Promise.allSettled(
-                arSpaces.map((space) =>
-                    space.getEnvironments().then(({ items: arEnvironment }) => arEnvironment.map(({ sys }) => sys.id)),
-                ),
+                arSpaces.map(async (space) => {
+                    const resultEnvs: Array<string> = [];
+                    let skipEnvs = 0;
+                    let totalEnvs = 0;
+                    let limitEnvs = 0;
+                    do {
+                        const environments = await space.getEnvironments({ skip: skipEnvs + limitEnvs });
+                        resultEnvs.push(
+                            ...environments.items
+                                .map(({ sys }) =>
+                                    sys?.status?.sys?.id === "ready" ? sys?.aliasedEnvironment?.sys?.id || sys?.id : "",
+                                )
+                                .filter((env) => env),
+                        );
+                        skipEnvs = environments.skip;
+                        limitEnvs = environments.limit;
+                        totalEnvs = environments.total;
+                    } while (skipEnvs + limitEnvs < totalEnvs);
+
+                    return _.uniq(resultEnvs);
+                }),
             );
 
             result.push(
@@ -63,10 +86,10 @@ export class ContentfulManager {
                 })),
             );
 
-            skip = spaces.skip;
-            limit = spaces.limit;
-            total = spaces.total;
-        } while (skip + limit < total);
+            skipSpaces = spaces.skip;
+            limitSpaces = spaces.limit;
+            totalSpaces = spaces.total;
+        } while (skipSpaces + limitSpaces < totalSpaces);
 
         return result;
     }
@@ -86,7 +109,11 @@ export class ContentfulManager {
                     .map(({ sys }) => ({ space: sys?.space?.sys?.id, environment: sys?.environment?.sys?.id }))
                     .filter(({ space, environment }) => !!space && !!environment)
                     .reduce(
-                        (prev, { space, environment }) => set(`${space}.${environment}`, true, prev),
+                        (prev, { space, environment }) => {
+                            prev[space] = prev[space] || {};
+                            prev[space][environment] = true;
+                            return prev;
+                        },
                         {} as Record<string, Record<string, boolean>>,
                     ),
             );

@@ -21,7 +21,13 @@ export class SpaceListManager {
 
     private readonly rateLimiter: RateLimiter;
 
-    constructor(credentials: object, datasetId: string, tableId: string, inventoryApiUrl: string, inventoryAuthKey: string) {
+    constructor(
+        credentials: object,
+        datasetId: string,
+        tableId: string,
+        inventoryApiUrl: string,
+        inventoryAuthKey: string,
+    ) {
         this.bigquery = new BigQuery({ credentials });
         this.datasetId = datasetId;
         this.tableId = tableId;
@@ -31,7 +37,7 @@ export class SpaceListManager {
         this.rateLimiter = new RateLimiter(1, 2000);
     }
 
-    private async rateLimitedOperation(rateLimiter: Function): Promise<void> {
+    private async rateLimitedOperation(rateLimiter: () => Promise<void>): Promise<void> {
         return this.rateLimiter.addToQueue(rateLimiter);
     }
 
@@ -48,15 +54,13 @@ export class SpaceListManager {
             const [job] = await this.bigquery.createQueryJob({ query });
             const [rows] = await job.getQueryResults();
 
-            const fetchedSpaces: Space[] = rows.map((row) => ({
+            return rows.map<Space>((row) => ({
                 name: row.name,
                 environment: row.environment,
                 createdAt: row.createdAt,
                 decommissioned: row.decommissioned,
-                presentInInventory: row.presentInInventory
+                presentInInventory: row.presentInInventory,
             }));
-
-            return fetchedSpaces;
         } catch (error) {
             errorHandler(error as Error);
             return [];
@@ -70,32 +74,45 @@ export class SpaceListManager {
         const existingSpaces = await this.fetchSpacesFromBigQuery();
         const table = this.bigquery.dataset(this.datasetId).table(this.tableId);
         const newSpaces = spaces.filter(({ name, environment }) => {
-            return !existingSpaces.some(existingSpace =>
-                existingSpace.name === name && existingSpace.environment === environment
+            return !existingSpaces.some(
+                (existingSpace) => existingSpace.name === name && existingSpace.environment === environment,
             );
         });
-    
+
         if (newSpaces.length === 0) {
-            console.log('No new spaces to add.');
+            console.log("No new spaces to add.");
             return;
         }
-    
-        const rateLimiter = newSpaces.map(({ name, environment, createdAt, decommissioned, presentInInventory }) => async () => {
-            try {
-                await table.insert([{ name, environment, createdAt, decommissioned, presentInInventory }]);
-                console.log('Space added in BigQuery', { name, environment, createdAt, decommissioned, presentInInventory });
-            } catch (error) {
-                errorHandler(error as Error);
-            }
-        });
-    
+
+        const rateLimiter = newSpaces.map(
+            ({ name, environment, createdAt, decommissioned, presentInInventory }) =>
+                async () => {
+                    try {
+                        await table.insert([{ name, environment, createdAt, decommissioned, presentInInventory }]);
+                        console.log("Space added in BigQuery", {
+                            name,
+                            environment,
+                            createdAt,
+                            decommissioned,
+                            presentInInventory,
+                        });
+                    } catch (error) {
+                        errorHandler(error as Error);
+                    }
+                },
+        );
+
         await Promise.all(rateLimiter.map((op) => this.rateLimitedOperation(op)));
     }
 
     /**
      * Marks a specific space in a particular environment as decommissioned
      */
-    public async switchDecommissionedMark(spaceName: string, environment: string, decommissioned: number): Promise<void> {
+    public async switchDecommissionedMark(
+        spaceName: string,
+        environment: string,
+        decommissioned: number,
+    ): Promise<void> {
         const rateLimiter = async () => {
             let query: string;
 
@@ -118,7 +135,9 @@ export class SpaceListManager {
             try {
                 await this.rateLimitedOperation(async () => {
                     await this.bigquery.createQueryJob({ query });
-                    console.log(`Space status updated in BigQuery: ${spaceName} - ${environment} - Decommissioned: ${decommissioned}`);
+                    console.log(
+                        `Space status updated in BigQuery: ${spaceName} - ${environment} - Decommissioned: ${decommissioned}`,
+                    );
                 });
             } catch (error) {
                 errorHandler(error as Error);
@@ -136,35 +155,37 @@ export class SpaceListManager {
             const response = await axios.get(this.inventoryApiUrl, {
                 auth: {
                     username: "",
-                    password: this.inventoryAuthKey
-                }
+                    password: this.inventoryAuthKey,
+                },
             });
-    
+
             const inventorySpaces = response.data as Array<{ name: string }>;
             const existingSpaces = await this.fetchSpacesFromBigQuery();
-    
+
             const batchSize = 20;
             const spaceChunks = [];
             for (let i = 0; i < existingSpaces.length; i += batchSize) {
                 spaceChunks.push(existingSpaces.slice(i, i + batchSize));
             }
-    
+
             for (const chunk of spaceChunks) {
-                await Promise.all(chunk.map(async (existingSpace) => {
-                    const foundSpace = inventorySpaces.find((inventorySpace) => {
-                        return existingSpace.name === inventorySpace.name;
-                    });
-    
-                    if (foundSpace) {
-                        if (existingSpace.presentInInventory !== 1) {
-                            await this.updateSpacePresentInInventory(existingSpace.name, 1);
+                await Promise.all(
+                    chunk.map(async (existingSpace) => {
+                        const foundSpace = inventorySpaces.find((inventorySpace) => {
+                            return existingSpace.name === inventorySpace.name;
+                        });
+
+                        if (foundSpace) {
+                            if (existingSpace.presentInInventory !== 1) {
+                                await this.updateSpacePresentInInventory(existingSpace.name, 1);
+                            }
+                        } else {
+                            if (existingSpace.presentInInventory !== 0) {
+                                await this.updateSpacePresentInInventory(existingSpace.name, 0);
+                            }
                         }
-                    } else {
-                        if (existingSpace.presentInInventory !== 0) {
-                            await this.updateSpacePresentInInventory(existingSpace.name, 0);
-                        }
-                    }
-                }));
+                    }),
+                );
             }
         } catch (error) {
             errorHandler(error as Error);

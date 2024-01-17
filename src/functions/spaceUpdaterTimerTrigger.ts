@@ -24,15 +24,15 @@ export async function spaceUpdaterTimerTrigger(_myTimer: Timer, _context: Invoca
         const contentfulAccessTokenValue = contentfulAccessToken.value || "";
         const bigQueryTokenValue = JSON.parse(bigQueryToken.value || "");
         bigQueryTokenValue.private_key = bigQueryTokenValue.private_key.replace(/\\n/g, "\n");
-        const inventoryAuthKeyValue = inventoryAuthKey.value || ""
+        const inventoryAuthKeyValue = inventoryAuthKey.value || "";
 
         const contentfulManager = new ContentfulManager(contentfulAccessTokenValue);
         const spaceListManager = new SpaceListManager(
-            bigQueryTokenValue, 
-            GLOBAL_SETTINGS.BIG_QUERY_DATASET_ID, 
-            GLOBAL_SETTINGS.BIG_QUERY_TABLE_ID, 
-            GLOBAL_SETTINGS.MWI_API_URL, 
-            inventoryAuthKeyValue
+            bigQueryTokenValue,
+            GLOBAL_SETTINGS.BIG_QUERY_DATASET_ID,
+            GLOBAL_SETTINGS.BIG_QUERY_TABLE_ID,
+            GLOBAL_SETTINGS.MWI_API_URL,
+            inventoryAuthKeyValue,
         );
 
         const allSpacesPromise = contentfulManager.getAllSpaces();
@@ -40,53 +40,45 @@ export async function spaceUpdaterTimerTrigger(_myTimer: Timer, _context: Invoca
         const [allSpaces, allInstalledSpaces] = await Promise.all([allSpacesPromise, allInstalledSpacesPromise]);
 
         // check where App is not installed and install it
-        const rateLimiter = new RateLimiter(5, 1000);
-        const batchSize = 20;
-        const installations: Array<Promise<void>> = [];
-        for (let i = 0; i < allSpaces.length; i += batchSize) {
-            const batch = allSpaces.slice(i, i + batchSize);
-
-            const batchInstallations = batch.flatMap(({ spaceId, environments }) => {
-                return environments.map((environment) => {
-                    const isInstalled = _.get(allInstalledSpaces, `${spaceId}.${environment}`, false);
-
-                    if (!isInstalled) {
-                        console.log(`Adding app installation to the queue for spaceId: ${spaceId}, environment: ${environment}`);
-
-                        return rateLimiter.addToQueue(async () => {
-                            console.log(`Installing app for spaceId: ${spaceId}, environment: ${environment}`);
-                            await contentfulManager.installApp({
-                                spaceId: spaceId,
-                                environmentId: environment,
-                                appDefinitionId: GLOBAL_SETTINGS.CF_APP_DEFINITION_ID,
-                            });
-                            console.log(`App installed successfully for spaceId: ${spaceId}, environment: ${environment}`);
+        const rateLimiter = new RateLimiter(5, 10000);
+        const installations: Array<Promise<void>> = allSpaces.flatMap(({ spaceId, environments }) =>
+            environments.map((environment) => {
+                if (!allInstalledSpaces[spaceId]?.[environment]) {
+                    return rateLimiter.addToQueue(async () => {
+                        console.log(`Installing app for spaceId: ${spaceId}, environment: ${environment}`);
+                        const result = await contentfulManager.installApp({
+                            spaceId: spaceId,
+                            environmentId: environment,
+                            appDefinitionId: GLOBAL_SETTINGS.CF_APP_DEFINITION_ID,
                         });
-                    } else {
-                        console.log(`App is already installed for spaceId: ${spaceId}, environment: ${environment}`);
-                    }
+                        console.log(
+                            result
+                                ? `App installed successfully for spaceId: ${spaceId}, environment: ${environment}`
+                                : `App installation error for spaceId: ${spaceId}, environment: ${environment}`,
+                        );
+                    });
+                }
 
-                    return Promise.resolve();
-                });
-            });
-
-            installations.push(Promise.all(batchInstallations).then(() => {}));
-        }
+                return Promise.resolve();
+            }),
+        );
 
         await Promise.all(installations);
 
         // TODO
         // Need to check which Spaces is exist in `bigQuery` but didn't exist in Contentful anymore
         // And check that Spaces in `bigQuery`
-        const spacesToUpdate: Space[] = allSpaces.map(({ spaceName, environments, createdAt }) =>
-            environments.map((environment) => ({
-                name: spaceName,
-                environment,
-                createdAt: new Date(createdAt).toISOString().slice(0, -1),
-                decommissioned: 0,
-                presentInInventory: 0
-            }))
-        ).flat();
+        const spacesToUpdate: Space[] = allSpaces
+            .map(({ spaceName, environments, createdAt }) =>
+                environments.map((environment) => ({
+                    name: spaceName,
+                    environment,
+                    createdAt: new Date(createdAt).toISOString().slice(0, -1),
+                    decommissioned: 0,
+                    presentInInventory: 0,
+                })),
+            )
+            .flat();
 
         await spaceListManager.updateSpaceList(spacesToUpdate);
 
@@ -95,7 +87,8 @@ export async function spaceUpdaterTimerTrigger(_myTimer: Timer, _context: Invoca
         const fetchedSpaces: Space[] = await spaceListManager.fetchSpacesFromBigQuery();
         fetchedSpaces.forEach(({ name, environment, decommissioned }) => {
             const existsInContentful = allSpaces.some(
-                (contentfulSpace) => contentfulSpace.spaceName === name && contentfulSpace.environments.includes(environment)
+                (contentfulSpace) =>
+                    contentfulSpace.spaceName === name && contentfulSpace.environments.includes(environment),
             );
             if (!existsInContentful) {
                 if (decommissioned !== 1) {
