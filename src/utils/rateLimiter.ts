@@ -1,5 +1,5 @@
 export class RateLimiter {
-    private queue: Function[] = [];
+    private queue: Array<() => Promise<void>> = [];
     private isProcessing = false;
     private limit: number;
     private delay: number;
@@ -9,7 +9,7 @@ export class RateLimiter {
         this.delay = delay;
     }
 
-    public async addToQueue(rateLimiter: Function): Promise<void> {
+    public async addToQueue(rateLimiter: () => Promise<void>): Promise<void> {
         return new Promise<void>((resolve) => {
             this.queue.push(async () => {
                 await rateLimiter();
@@ -26,9 +26,11 @@ export class RateLimiter {
             this.isProcessing = true;
             while (this.queue.length > 0) {
                 const tasksToProcess = this.queue.splice(0, this.limit);
-                await Promise.all(tasksToProcess.map(async (task) => {
-                    await task();
-                }));
+                await Promise.all(
+                    tasksToProcess.map(async (task) => {
+                        await task();
+                    }),
+                );
                 await this.sleep(this.delay);
             }
             this.isProcessing = false;
