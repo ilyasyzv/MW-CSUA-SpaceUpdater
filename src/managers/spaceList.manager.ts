@@ -172,16 +172,16 @@ export class SpaceListManager {
                 await Promise.all(
                     chunk.map(async (existingSpace) => {
                         const foundSpace = inventorySpaces.find((inventorySpace) => {
-                            return existingSpace.name === inventorySpace.name;
+                            return existingSpace.name.toLowerCase() === inventorySpace.name.toLowerCase();
                         });
 
                         if (foundSpace) {
                             if (existingSpace.presentInInventory !== 1) {
-                                await this.updateSpacePresentInInventory(existingSpace.name, 1);
+                                await this.updateSpacePresentInInventory(existingSpace.name, existingSpace.environment, 1);
                             }
                         } else {
                             if (existingSpace.presentInInventory !== 0) {
-                                await this.updateSpacePresentInInventory(existingSpace.name, 0);
+                                await this.updateSpacePresentInInventory(existingSpace.name, existingSpace.environment, 0);
                             }
                         }
                     }),
@@ -195,18 +195,18 @@ export class SpaceListManager {
     /**
      * Updates the presence status of a space in the BigQuery table.
      */
-    private async updateSpacePresentInInventory(name: string, presentInInventory: number): Promise<void> {
+    private async updateSpacePresentInInventory(name: string, environment: string, presentInInventory: number): Promise<void> {
         const rateLimiter = async () => {
             const query = `
                 UPDATE \`${this.datasetId}.${this.tableId}\`
                 SET presentInInventory = ${presentInInventory}
-                WHERE name = "${name}"
+                WHERE name = "${name}" AND environment = "${environment}"
             `;
 
             try {
                 await this.rateLimitedOperation(async () => {
                     await this.bigquery.createQueryJob({ query });
-                    console.log(`Space updated with presentInInventory status: ${name} - ${presentInInventory}`);
+                    console.log(`Space updated with presentInInventory status: ${name} - ${environment} - ${presentInInventory}`);
                 });
             } catch (error) {
                 errorHandler(error as Error);
